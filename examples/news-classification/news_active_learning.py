@@ -27,7 +27,11 @@ def main():
 
     feature_extractor = FeatureExtractor()
     vocab_size = feature_extractor.create_features(unlabeled_data, training_data)
-
+    model = train_model(training_data,
+                        feature_extractor.feature_index,
+                        evaluation_data=evaluation_data,
+                        vocab_size=vocab_size
+                        )
 
 if __name__ == '__main__':
     main()
