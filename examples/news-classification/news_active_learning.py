@@ -22,6 +22,12 @@ def main():
     evaluation_data = reader.load_data(evaluation_related_data) + reader.load_data(evaluation_not_related_data)
     evaluation_count = len(evaluation_data)
 
+    unlabeled_datadir = datadir + 'unlabeled_data/unlabeled_data.csv'
+    unlabeled_data = reader.load_data(unlabeled_datadir, skip_labeled=True)
+
+    feature_extractor = FeatureExtractor()
+    vocab_size = feature_extractor.create_features(unlabeled_data, training_data)
+
 
 if __name__ == '__main__':
     main()
