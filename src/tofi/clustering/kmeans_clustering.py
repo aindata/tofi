@@ -67,7 +67,9 @@ class Cluster:
 
     def get_close_samples(self, n: int, cluster_id: int):
         one_cluster = self.X[np.where(self.labels == cluster_id)]
+        # Same with argsort but faster.
         min_distance_indexes = np.argpartition(self.distances[cluster_id], n)[:n]
+        # min_distance_indexes = np.argsort(self.distances[cluster_id])[:n]  # Same with above.
         min_distance_indexes = [idx for idx in min_distance_indexes if idx not in self.selected_indexes[cluster_id]]
         self.save_used_indexes(min_distance_indexes, cluster_id)
         close_instances = one_cluster[min_distance_indexes]
