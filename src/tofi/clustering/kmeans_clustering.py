@@ -5,6 +5,8 @@ import numpy as np
 from sklearn.datasets import make_blobs
 
 
+# TODO: Return indexes of X that are used in sampling. Therefore, we can use the indexes to get the original data.
+
 class Cluster:
     def __init__(self,
                  n_clusters=8,
