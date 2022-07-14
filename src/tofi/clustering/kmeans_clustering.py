@@ -118,7 +118,6 @@ class KMeansClusterSampler(AbstractCluster, ABC):
             # the last row of distance matrix holds the distances from cluster centroid to other instances
             # TODO: there are too many unnecessary computations, i.e. we only use the last row of distance_matrix
             distance_matrix = pairwise_distances(c_i_centroid, metric=self.distance_metric)
-            # self._cache_pairwise_distances(distance_matrix[:-1, -1], cluster_id)
             argsorted_distances = c_instance_ids[np.argsort(distance_matrix[:-1, -1])]
             self._cache_sorted_distances(argsorted_distances, cluster_id)
 
