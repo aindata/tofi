@@ -7,8 +7,8 @@ class AbstractCluster(ABC):
     """
 
     @abstractmethod
-    def get_samples(self):
-        pass  # TODO: what to put pass or raise notimplemented error?
+    def get_samples(self, n_samples):
+        pass
 
     @abstractmethod
     def get_centroid_samples(self):
@@ -19,5 +19,5 @@ class AbstractCluster(ABC):
         pass
 
     @abstractmethod
-    def get_random_samples(self):
+    def get_random_samples(self, n_samples: int):
         pass

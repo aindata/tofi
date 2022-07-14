@@ -10,6 +10,7 @@ Human-in-the-loop book by Robert (Munro) Monarch
 Monarch suggests that it's likely that outliers are rarely seen examples, hence sample them by only a small
 number
 """
+
 from abc import ABC
 
 from sklearn.cluster import KMeans
@@ -18,187 +19,207 @@ from sklearn.metrics import pairwise_distances
 import numpy as np
 from sklearn.datasets import make_blobs
 
-from clustering import AbstractCluster
+from .clustering import AbstractCluster
+from .base_errors import NotEnoughPointsError, ClusterDataAlreadySet
 
 
-class KMeansCluster(AbstractCluster, ABC):
-    # TODO: Return indexes of X that are used in sampling. Therefore, we can use the indexes to get the original data.
+class KMeansClusterSampler(AbstractCluster, ABC):
+    """
+    Implements KMeans clustering algorithm to extract cluster based samples
+    """
     def __init__(self,
                  n_clusters=8,
                  max_features=None,
+                 distance_metric='cosine',
                  max_iter=1000,
-                 **kwargs):
+                 **kwargs
+                 ):
+        """
+
+        :param n_clusters: number of clusters to sample from
+        :param max_features: TODO
+        :param distance_metric: cosine similarity
+        :param max_iter: TODO
+        :param kwargs: TODO
+        """
+        self.n_far = 1
+        self.n_closer = 1
         self.n_clusters = n_clusters
         self.max_features = max_features
         self.max_iter = max_iter
-        self.kwargs = kwargs
-        self.X = None
-        self.X_pca = None
+        self.distance_metric = distance_metric
         self.model = KMeans(n_clusters=n_clusters,
                             max_iter=max_iter,
                             **kwargs)
-        self.centroids = None
-        self.idx_to_cluster = None  # an array holding cluster_ids for each instance
-        self.distances = {}
-        self.selected_indexes = {}
-        self.close_samples = {}
-        self.far_samples = {}
-        self.random_samples = {}
-        self.close_instances_stacked = None
-        self.far_instances_stacked = None
-        self.random_instances_stacked = None
-        self.all_samples_stacked = None
-        for i in range(n_clusters):
-            self.selected_indexes[i] = []
-            self.close_samples[i] = None
-            self.far_samples[i] = None
-            self.random_samples[i] = None
+        self._X = None
+        self.X_pca = None
+        self.cluster_to_instances_sorted = {}  # holds cluster_id: [instance ids] in sorted order
 
-    def _fit(self, data):
-        if data.shape[0] < self.n_clusters:
-            print(f'Number of clusters is greater than number of instances in the dataset.')  # TODO: raise an error
-            return None
-        self.X = data
-        if self.max_features is not None:
-            self.X_pca = PCA(n_components=self.max_features).fit_transform(self.X)
-        self.model = self.model.fit(self.X_pca if self.X_pca is not None else self.X)
-        self.centroids = self.model.cluster_centers_
-        self.idx_to_cluster = self.model.labels_
-
-    def get_centroids(self):
-        return self.centroids
-
-    def get_labels(self):
-        return self.idx_to_cluster
-
-    def calculate_cluster_distances(self, distance_metric='cosine'):
+    def fit(self, data):
         """
-        # TODO: docstring
-        :param distance_metric:
+        calls fit method of KMeans from sckit-learn
+        :param data:
         :return:
         """
-        for i, c in enumerate(self.centroids):
-            one_cluster = self.X[np.where(self.labels == i)]
-            centroid_with_group = np.vstack([one_cluster, c])
-            distance_matrix = pairwise_distances(centroid_with_group, metric=distance_metric)
-            distances = distance_matrix[:-1, -1]
-            self.distances[i] = distances
+        if data.shape[0] < self.n_clusters:
+            raise NotEnoughPointsError(data_size=data.shape[0], n_clusters=self.n_clusters)
+        self.set_x(data)
 
-    def get_close_samples(self, n: int, cluster_id: int):  # TODO: computes centroid
-        one_cluster = self.X[np.where(self.labels == cluster_id)]
-        # Same with argsort but faster.
-        min_distance_indexes = np.argpartition(self.distances[cluster_id], n)[:n]
-        # min_distance_indexes = np.argsort(self.distances[cluster_id])[:n]  # Same with above.
-        min_distance_indexes = [idx for idx in min_distance_indexes if idx not in self.selected_indexes[cluster_id]]
-        self.save_used_indexes(min_distance_indexes, cluster_id)
-        close_instances = one_cluster[min_distance_indexes]
-        return close_instances
+        if self.max_features:
+            self.X_pca = PCA(n_components=self.max_features).fit_transform(self.get_x())
+        # TODO: do we need to do self.model = ... thing here?
+        self.model = self.model.fit(self.X_pca if self.X_pca is not None else self.get_x())
+
+    def set_x(self, data):
+        if self._X:
+            raise ClusterDataAlreadySet
+        self._X = data
+
+    def get_x(self):
+        return self._X
+
+    def set_n_closer(self, n_closer):
+        self.n_closer = n_closer
+
+    def set_n_far(self, n_far):
+        self.n_far = n_far
+
+    def _get_centroids(self):
+        """
+        :return: cluster center coordinates
+        """
+        return self.model.cluster_centers_
+
+    def get_labels(self):
+        return self.model.labels_
+
+    def get_instances_from_cluster(self, cluster_id: int):
+        """
+        Extracts instances belonging to cluster_id from data
+        """
+        instance_ids = np.where(self.get_labels() == cluster_id)[0]
+        return instance_ids, self._X[instance_ids]
+
+    def _cache_sorted_distances(self,
+                                argsorted_distances: np.array,
+                                cluster_id: int
+                                ):
+        self.cluster_to_instances_sorted[cluster_id] = argsorted_distances
+
+    def _calculate_cluster_distances(self):
+        """
+        Computes the distance between cluster-centroid and each instance from that cluster
+        """
+        centroids = self._get_centroids()
+        for cluster_id, centroid in enumerate(centroids):
+            c_instance_ids, c_instance_vecs = self.get_instances_from_cluster(cluster_id)
+            c_i_centroid = np.vstack([c_instance_vecs, centroid])
+            # distance_matrix[i,j] denotes the distance between row_i and row_j
+            # the last row of distance matrix holds the distances from cluster centroid to other instances
+            # TODO: there are too many unnecessary computations, i.e. we only use the last row of distance_matrix
+            distance_matrix = pairwise_distances(c_i_centroid, metric=self.distance_metric)
+            # self._cache_pairwise_distances(distance_matrix[:-1, -1], cluster_id)
+            argsorted_distances = c_instance_ids[np.argsort(distance_matrix[:-1, -1])]
+            self._cache_sorted_distances(argsorted_distances, cluster_id)
+
+    def get_close_samples_to_cluster(self, n_samples=0, cluster_id=None):
+        """
+        Computes n_samples many close samples to the cluster_id
+        :param n_samples: number of samples to generate
+        :param cluster_id: denotes the cluster work from
+        :return: indexes of items that are closer
+        """
+        if n_samples != 1:
+            self.set_n_closer(n_samples)
+        if not self.cluster_to_instances_sorted:
+            self._calculate_cluster_distances()
+        return self.cluster_to_instances_sorted[cluster_id][:n_samples]
+
+    def get_far_samples_to_cluster(self, n_samples=0, cluster_id=None):
+        """
+        Computes n_samples many samples that are farest from the clustercentroid
+        :param n_samples: number of samples to generate
+        :param cluster_id: denotes the cluster work from
+        :return: indexes of items that are far
+        """
+        if n_samples != 1:
+            self.set_n_far(n_samples)
+        if not self.cluster_to_instances_sorted:
+            self._calculate_cluster_distances()
+        return self.cluster_to_instances_sorted[cluster_id][-n_samples:]
 
     def get_centroid_samples(self):
         """
+        Computes the closest instance for each cluster
+        :return: indexes of items that are closer
+        """
+        ret = []
+        for cluster_id in range(self.n_clusters):
+            ret += list(self.get_close_samples_to_cluster(1, cluster_id=cluster_id))
+        return ret
 
+    def get_outlier_samples(self):
+        """
+        Computes the farest instance for each cluster
+        :return: indexes of items that are farest
+        """
+        ret = []
+        for cluster_id in range(self.n_clusters):
+            ret += list(self.get_far_samples_to_cluster(1, cluster_id=cluster_id))
+        return ret
+
+    def get_random_samples(self, n_samples: int):
+        """
+        Randomly sample from each cluster by equally,
+        if there is a remainder randomly choose a cluster and sample from this cluster for remaining many items
+        :param n_samples: number of samples to sample from
+        :return: index of items that are randomly selected
+        """
+        n_samples_cluster = n_samples // self.n_clusters
+        n_close, n_far = self.n_closer, self.n_far
+        ret = []
+        for cluster_id in range(self.n_clusters):
+            temp = list(self.cluster_to_instances_sorted[cluster_id][n_close:-n_far])
+            ret += list(np.random.choice(temp, n_samples_cluster, replace=False))
+        if n_samples % self.n_clusters != 0:
+            cluster_id = np.random.choice(self.n_clusters)
+            temp = list(self.cluster_to_instances_sorted[cluster_id][n_close:-n_far])
+            # this is a tricky set solution to assure uniqueness of remaining items
+            to_sample = list(set(temp) - set(ret))
+            ret += list(np.random.choice(to_sample, n_samples % self.n_clusters))
+        return ret
+
+    def get_samples(self, n_samples_random=None):
+        """
+        TODO: decide number of sampling strategy
+        :param n_samples_random: number of random samples to be used
         :return:
         """
-        pass
-
-    def get_far_samples(self, n: int, cluster_id: int):
-        one_cluster = self.X[np.where(self.labels == cluster_id)]
-        max_distance_indexes = np.argpartition(self.distances[cluster_id], -n)[-n:]
-        max_distance_indexes = [idx for idx in max_distance_indexes if idx not in self.selected_indexes[cluster_id]]
-        self.save_used_indexes(max_distance_indexes, cluster_id)
-        far_instances = one_cluster[max_distance_indexes]
-        return far_instances
-
-    def get_random_samples(self, n: int, cluster_id: int):
-        one_cluster = self.X[np.where(self.labels == cluster_id)]
-        one_cluster = np.delete(one_cluster, self.selected_indexes[cluster_id])
-        random_indexes = np.random.choice(len(one_cluster), n, replace=False)
-        # TODO: we may get less number of indexes or this can fail.
-        self.save_used_indexes(random_indexes, cluster_id)
-        random_instances = one_cluster[random_indexes]
-        return random_instances
-
-    def save_used_indexes(self, arr: np.array, cluster_id: int):
-        self.selected_indexes[cluster_id].extend(arr)
-
-    def stack_results(self):
-        close_samples_filled = {k: v for k, v in self.close_samples.items() if v is not None}
-        far_samples_filled = {k: v for k, v in self.far_samples.items() if v is not None}
-        random_samples_filled = {k: v for k, v in self.random_samples.items() if v is not None}
-        stack_list = []
-        if close_samples_filled:
-            self.close_instances_stacked = np.vstack(close_samples_filled.values())
-            np.random.shuffle(self.close_instances_stacked)  # TODO: you do not need to shuffle what to sample
-            stack_list.append(self.close_instances_stacked)
-        if far_samples_filled:
-            self.far_instances_stacked = np.vstack(far_samples_filled.values())
-            np.random.shuffle(self.far_instances_stacked)   # TODO: you do not need to shuffle what to sample
-            stack_list.append(self.far_instances_stacked)
-        if random_samples_filled:
-            self.random_instances_stacked = np.vstack(random_samples_filled.values())
-            np.random.shuffle(self.random_instances_stacked)  # TODO: you do not need to shuffle what to sample
-            stack_list.append(self.random_instances_stacked)
-        self.all_samples_stacked = np.concatenate(stack_list)
-        return self.all_samples_stacked
-
-    def _get_n_samples_per_cluster(self, n_samples: int):
-        # Calculate number of samples for each cluster
-        n_samples_per_cluster = n_samples // self.n_clusters
-        cluster_remainder = n_samples % self.n_clusters
-        # TODO: int shouldn't change to array
-        n_samples_per_cluster = np.array([n_samples_per_cluster] * self.n_clusters)
-        while cluster_remainder > 0:
-            n_samples_per_cluster[np.argmin(n_samples_per_cluster)] += 1
-            cluster_remainder -= 1
-        return n_samples_per_cluster
-
-    def get_samples(self, n_samples: int, distance_metric='cosine'):
-        """
-        Algorithm:
-        1. compute cluster_centroid_samples -> this assumed to be equal to number of centroids
-        2. compute outlier_samples -> far samples from the cluster centroids
-        3. compute random_samples -> randomly choose samples that are unselected in previous steps
-
-        :param n_samples: total number of samples needed
-        :param distance_metric: distance function used to compute the distances
-        :return:
-        """
-
-        if n_samples > self.X.shape[0]:
-            print(f'Number of samples is less than number of instances in the dataset.'
-                  f'Please, decrease n value to {self.X.shape[0]}.')
-            return None  # TODO: raise an error
-        elif n_samples == self.X.shape[0]:
-            return self.X
-        if n_samples < self.n_clusters:
-            print(f'Number of samples is less than number of clusters.'
-                  f'Please, decrease n value to {self.n_clusters}.')
-            return None  # TODO: raise an error
-        # Calculate distances between centroids and instances.
-        self.calculate_cluster_distances(distance_metric=distance_metric)
-        n_samples_per_cluster = self._get_n_samples_per_cluster(n_samples)
-        # For every cluster, calculate number of samples for each type of sample and collect
-        for i in range(self.n_clusters):
-            if n_samples_per_cluster[i] == 1:
-                self.close_samples[i] = self.get_close_samples(1, i)
-            elif n_samples_per_cluster[i] == 2:
-                self.close_samples[i] = self.get_close_samples(1, i)
-                self.far_samples[i] = self.get_far_samples(1, i)
-            else:
-                close_sample_size = np.ceil(n_samples * 0.2).astype(int)
-                far_sample_size = np.ceil(n_samples * 0.2).astype(int)
-                random_sample_size = n_samples - (close_sample_size + far_sample_size)
-                self.close_samples[i] = self.get_close_samples(close_sample_size, i)
-                self.far_samples[i] = self.get_far_samples(far_sample_size, i)
-                self.random_samples[i] = self.get_random_samples(random_sample_size, i)
-        self.stack_results()
+        if not n_samples_random:
+            raise ValueError("You must specify number of samples")
+        centroid_samples = self.get_centroid_samples()
+        outlier_samples = self.get_outlier_samples()
+        random_samples = self.get_random_samples(n_samples=n_samples_random)
+        return centroid_samples + outlier_samples + random_samples
 
 
 # EXAMPLE OF USAGE
-X, y = make_blobs(n_samples=30, n_features=2)
-print(X.shape)
-cluster = KMeansCluster(n_clusters=3)
+# X, y = make_blobs(n_samples=30, n_features=2, random_state=0)
+# assert X.sum() == 90.7697879524822
+#
+#
+# sampler = KMeansClusterSampler(n_clusters=3,
+#                                max_iter=1000,
+#                                random_state=0)
+#
+#
+# sampler.fit(X)
+# assert sampler.get_centroid_samples() == [7, 16, 29]
+# print("close samples assertion passed")
+# assert sampler.get_outlier_samples() == [18, 6, 24]
+# print("farest samples assertion passed")
+# # print(sampler.get_random_samples(5))
+# print(sampler.get_samples(n_samples_random=5))
 
-cluster._fit(X)
-cluster.get_samples(n_samples=10)
-print(cluster)
+#cluster.get_samples(n_samples=10)
+# print(cluster)
