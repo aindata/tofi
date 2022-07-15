@@ -48,6 +48,7 @@ def test_cluster_sorting_distance(sampler_model):
     assert (sampler_model.cluster_to_instances_sorted[2] == [29, 14, 15, 22, 19, 5, 17, 23, 26, 24]).all()
     logging.info('Instance sorting test passed')
 
+
 def test_get_centroid_samples(sampler_model):
     """
     Tests the closest sample method
@@ -63,12 +64,23 @@ def test_get_outlier_samples(sampler_model):
     :param sampler_model:
     :return:
     """
-    assert sampler_model.get_outlier_samples()
+    assert sampler_model.get_outlier_samples() == [18, 6, 24]
     logging.info('Outlier samples test passed')
 
 
+def test_get_far_samples_to_cluster():
+    pass
+
+
+def test_get_close_samples_to_cluster():
+    pass
+
+
+def test_get_random_samples():
+    pass
+
+
 def test_main():
-    logger = logging.getLogger(__name__)
     logging.basicConfig(level=logging.INFO)
     X, scikit_model = setup_data_environment()
     sampler_model = KMeansClusterSampler(n_clusters=3,

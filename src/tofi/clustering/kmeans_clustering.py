@@ -17,7 +17,6 @@ from sklearn.cluster import KMeans
 from sklearn.decomposition import PCA
 from sklearn.metrics import pairwise_distances
 import numpy as np
-from sklearn.datasets import make_blobs
 
 from .clustering import AbstractCluster
 from .base_errors import NotEnoughPointsError, ClusterDataAlreadySet
@@ -121,7 +120,7 @@ class KMeansClusterSampler(AbstractCluster, ABC):
             argsorted_distances = c_instance_ids[np.argsort(distance_matrix[:-1, -1])]
             self._cache_sorted_distances(argsorted_distances, cluster_id)
 
-    def get_close_samples_to_cluster(self, n_samples=0, cluster_id=None):
+    def get_close_samples_to_cluster(self, n_samples=1, cluster_id=None):
         """
         Computes n_samples many close samples to the cluster_id
         :param n_samples: number of samples to generate
@@ -134,7 +133,7 @@ class KMeansClusterSampler(AbstractCluster, ABC):
             self._calculate_cluster_distances()
         return self.cluster_to_instances_sorted[cluster_id][:n_samples]
 
-    def get_far_samples_to_cluster(self, n_samples=0, cluster_id=None):
+    def get_far_samples_to_cluster(self, n_samples=1, cluster_id=None):
         """
         Computes n_samples many samples that are farest from the clustercentroid
         :param n_samples: number of samples to generate
@@ -154,7 +153,7 @@ class KMeansClusterSampler(AbstractCluster, ABC):
         """
         ret = []
         for cluster_id in range(self.n_clusters):
-            ret += list(self.get_close_samples_to_cluster(1, cluster_id=cluster_id))
+            ret += list(self.get_close_samples_to_cluster(n_samples=1, cluster_id=cluster_id))
         return ret
 
     def get_outlier_samples(self):
@@ -164,7 +163,7 @@ class KMeansClusterSampler(AbstractCluster, ABC):
         """
         ret = []
         for cluster_id in range(self.n_clusters):
-            ret += list(self.get_far_samples_to_cluster(1, cluster_id=cluster_id))
+            ret += list(self.get_far_samples_to_cluster(n_samples=1, cluster_id=cluster_id))
         return ret
 
     def get_random_samples(self, n_samples: int):
@@ -180,7 +179,7 @@ class KMeansClusterSampler(AbstractCluster, ABC):
         for cluster_id in range(self.n_clusters):
             temp = list(self.cluster_to_instances_sorted[cluster_id][n_close:-n_far])
             ret += list(np.random.choice(temp, n_samples_cluster, replace=False))
-        if n_samples % self.n_clusters != 0:
+        if n_samples % self.n_clusters != 0:  # TODO: improve this selection @yasin
             cluster_id = np.random.choice(self.n_clusters)
             temp = list(self.cluster_to_instances_sorted[cluster_id][n_close:-n_far])
             # this is a tricky set solution to assure uniqueness of remaining items
@@ -203,6 +202,7 @@ class KMeansClusterSampler(AbstractCluster, ABC):
 
 
 # EXAMPLE OF USAGE
+# from sklearn.datasets import make_blobs
 # X, y = make_blobs(n_samples=30, n_features=2, random_state=0)
 # assert X.sum() == 90.7697879524822
 #
